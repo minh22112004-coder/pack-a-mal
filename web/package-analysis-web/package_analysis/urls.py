@@ -5,6 +5,9 @@ from django.conf.urls.static import static
 
 urlpatterns = [
     path("", views.homepage, name="homepage"),
+    # RESTful API endpoints
+    path("api/v1/analyze/", views.analyze_api, name="analyze_api"),
+    path("api/v1/task/<int:task_id>/", views.task_status_api, name="task_status_api"),
     path("contact/", views.contact, name="contact"),
     path("dashboard/", views.dashboard, name="dashboard"),
     path("get_wolfi_packages/", views.get_wolfi_packages, name="get_wolfi_packages"),

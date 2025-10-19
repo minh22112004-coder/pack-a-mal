@@ -1,5 +1,6 @@
 from django.shortcuts import render, redirect
 from django.http import HttpResponse, JsonResponse
+from django.views.decorators.csrf import csrf_exempt
 
 from .forms import PackageSubmitForm
 
@@ -8,40 +9,32 @@ import json
 
 from django.core.files.storage import FileSystemStorage
 
-from .models import Package, Report
+from .models import Package, ReportDynamicAnalysis, APIKey, AnalysisTask
 from collections import Counter
 from concurrent.futures import ThreadPoolExecutor
 from .src.py2src.py2src.url_finder import   URLFinder
+from .utils import PURLParser, validate_purl_format
+from .auth import require_api_key
+from django.utils import timezone
+from django.urls import reverse
 
 
 
 def save_report(reports):
-    ''' Save the report to the database '''
+
     package, created = Package.objects.get_or_create(
         package_name=reports['packages']['package_name'],
         package_version=reports['packages']['package_version'],
         ecosystem=reports['packages']['ecosystem']
     )
- 
-    syscalls_counter = Counter(reports['install']['syscalls'] + reports['import']['syscalls'])
-    the_report = Report(
+    report = ReportDynamicAnalysis.objects.create(
         package=package,
         time=reports['time'],
-        num_files=reports['install']['num_files'] + reports['import']['num_files'],
-        num_commands=reports['install']['num_commands'] + reports['import']['num_commands'],
-        num_network_connections=reports['install']['num_network_connections'] + reports['import']['num_network_connections'],
-        num_system_calls=reports['install']['num_system_calls'] + reports['import']['num_system_calls'],
-        files={
-            'read': list(set(reports['install']['files']['read'] + reports['import']['files']['read'])),
-            'write': list(set(reports['install']['files']['write'] + reports['import']['files']['write'])),
-            'delete': list(set(reports['install']['files']['delete'] + reports['import']['files']['delete'])),
-        },
-        dns=list(set(reports['install']['dns'] + reports['import']['dns'])),
-        ips=[dict(t) for t in {tuple(ip.items()) for ip in (reports['install']['ips'] + reports['import']['ips'])}],
-        commands=list({tuple(cmd) if isinstance(cmd, list) else cmd for cmd in reports['install']['commands'] + reports['import']['commands']}),
-        syscalls=list(syscalls_counter.items()),
+        report=reports
     )
-    the_report.save()
+    report.save()
+
+
 
 def dashboard(request):
     form = PackageSubmitForm()
@@ -195,7 +188,7 @@ def submit_sample(request):
                 print("Typo candidates: ", reports['typo_candidates'])
 
             
-            save_report(reports)
+            # save_report(reports)
             latest_report = Report.objects.latest('id')
             reports['id'] = latest_report.id
             return JsonResponse(reports)
@@ -221,6 +214,8 @@ def upload_sample(request):
         # save_report(reports)
         # latest_report = Report.objects.latest('id')
         # reports['id'] = latest_report.id
+        # delete the uploaded file
+        fs.delete(filename)
         return JsonResponse({"dynamic_analysis_report": reports})
     else:
         return JsonResponse({'status': 'error', 'message': 'Invalid request'}, status=400)
@@ -395,6 +390,277 @@ def get_pypi_versions(request):
     versions = get_versions(package_name)
 
     return JsonResponse({"versions":versions})
+
+
+@csrf_exempt
+@require_api_key
+def analyze_api(request):
+    """
+    API endpoint to analyze packages via PURL
+    Accepts POST requests with PURL in JSON body
+    Returns analysis task ID and result URL
+    """
+    if request.method != 'POST':
+        return JsonResponse({
+            'error': 'Method not allowed',
+            'message': 'Only POST requests are supported'
+        }, status=405)
+    
+    try:
+        # Parse JSON request body
+        data = json.loads(request.body)
+        purl = data.get('purl')
+        
+        if not purl:
+            return JsonResponse({
+                'error': 'Missing PURL',
+                'message': 'PURL parameter is required'
+            }, status=400)
+        
+        # Validate PURL format
+        if not validate_purl_format(purl):
+            return JsonResponse({
+                'error': 'Invalid PURL format',
+                'message': 'PURL must be a valid package URL starting with pkg:'
+            }, status=400)
+        
+        # Parse PURL to extract package information
+        try:
+            package_name, package_version, ecosystem = PURLParser.extract_package_info(purl)
+        except ValueError as e:
+            return JsonResponse({
+                'error': 'PURL parsing failed',
+                'message': str(e)
+            }, status=400)
+        
+        # Check for existing tasks (completed, running, or pending) within the last 24 hours
+        existing_tasks = AnalysisTask.objects.filter(
+            purl=purl,
+            created_at__gte=timezone.now() - timezone.timedelta(hours=24)
+        ).order_by('-created_at')
+        
+        # Debug: Print existing tasks for troubleshooting
+        print(f"DEBUG: Found {existing_tasks.count()} existing tasks for PURL: {purl}")
+        for task in existing_tasks:
+            print(f"  Task {task.id}: status={task.status}, created={task.created_at}")
+        
+        # Check for completed task first
+        completed_task = existing_tasks.filter(status='completed').first()
+        if completed_task and completed_task.report:
+            # Return existing analysis result
+            result_url = request.build_absolute_uri(
+                reverse('get_report', args=[completed_task.report.id])
+            )
+
+            # Save the completed analysis report as a downloadable JSON file on the server,
+
+            import os
+            from django.conf import settings
+
+            # Extract the report data from the JSONField
+            report_data = completed_task.report
+            if hasattr(report_data, 'report'):
+                # If it's a ReportDynamicAnalysis object, get the report field
+                report_json = report_data.report
+            else:
+                # If it's already the report data
+                report_json = report_data
+
+            # Define a directory to save JSON files (e.g., MEDIA_ROOT/analysis_reports/)
+            save_dir = getattr(settings, 'MEDIA_ROOT', os.path.join(os.path.dirname(os.path.abspath(__file__)), 'media'))
+            reports_subdir = os.path.join(save_dir, 'analysis_reports')
+            os.makedirs(reports_subdir, exist_ok=True)
+
+            # Save JSON with a unique filename per report (e.g., by report id)
+            json_filename = f"report_{completed_task.report.id}.json"
+            json_path = os.path.join(reports_subdir, json_filename)
+
+            # Save the file
+            with open(json_path, 'w', encoding='utf-8') as f:
+                json.dump(report_json, f, ensure_ascii=False, indent=2)
+
+            # Optionally, generate a URL for user access
+            # This assumes MEDIA_URL is configured, and files are served from MEDIA_ROOT
+            media_url = getattr(settings, 'MEDIA_URL', '/media/')
+            download_url = request.build_absolute_uri( 
+                os.path.join(media_url, 'analysis_reports', json_filename)
+            )
+
+            # Add download_url to the response
+
+            return JsonResponse({
+                'task_id': completed_task.id,
+                'status': 'completed',
+                'result_url': download_url,
+                'message': 'Analysis already exists (cached result)'
+            })
+        
+        # Check for running or pending task
+        active_task = existing_tasks.filter(status__in=['running', 'pending']).first()
+        if active_task:
+            return JsonResponse({
+                'task_id': active_task.id,
+                'status': active_task.status,
+                'result_url': request.build_absolute_uri(
+                    reverse('task_status_api', args=[active_task.id])
+                ),
+                'message': f'Analysis already {active_task.status}'
+            })
+        
+        # Final check before creating task (prevent race conditions)
+        last_check = AnalysisTask.objects.filter(
+            purl=purl,
+            status__in=['pending', 'running'],
+            created_at__gte=timezone.now() - timezone.timedelta(minutes=1)
+        ).first()
+        
+        if last_check:
+            return JsonResponse({
+                'task_id': last_check.id,
+                'status': last_check.status,
+                'result_url': request.build_absolute_uri(
+                    reverse('task_status_api', args=[last_check.id])
+                ),
+                'message': f'Analysis already {last_check.status} (race condition prevented)'
+            })
+        
+        # Create new analysis task
+        task = AnalysisTask.objects.create(
+            api_key=request.api_key,
+            purl=purl,
+            package_name=package_name,
+            package_version=package_version,
+            ecosystem=ecosystem,
+            status='pending'
+        )
+        
+        print(f"DEBUG: Created new task {task.id} for PURL: {purl}")
+        
+        # Start analysis asynchronously
+        try:
+            # Run analysis in background thread
+            from threading import Thread
+            
+            def run_analysis():
+                try:
+                    task.status = 'running'
+                    task.started_at = timezone.now()
+                    task.save()
+                    
+                    # Run the analysis using existing Helper methods
+                    with ThreadPoolExecutor() as executor:
+                        future_reports = executor.submit(Helper.run_package_analysis, package_name, package_version, ecosystem)
+
+                        reports = future_reports.result()
+                    
+                    # Save the report
+                    # TODO: correct save_report function to match with the, the structure of saved folder is :
+                    # 
+                    # TODO 1 : the dynamic analysis report should be save as jon file in server side
+                    # TODO 2: the json response to client will provide the url of the json file on the server side
+                    # TODO 3: beside the link, it also include all the json repports except system calls, but instead, including the frequency of system call names enter
+                    # TODO 4: we only save the information of packages: name, version, ecosystem,
+                    #  date of the latest analysis, 
+                     
+                    # Helper.run_package_analysis function
+                    save_report(reports)
+                    latest_report = ReportDynamicAnalysis.objects.latest('id')
+                    
+                    # Update task with completed status
+                    task.status = 'completed'
+                    task.completed_at = timezone.now()
+                    task.report = latest_report
+                    task.save()
+                    
+                except Exception as e:
+                    # Update task with error status
+                    task.status = 'failed'
+                    task.error_message = str(e)
+                    task.completed_at = timezone.now()
+                    task.save()
+            
+            # Start analysis thread
+            analysis_thread = Thread(target=run_analysis)
+            analysis_thread.daemon = True
+            analysis_thread.start()
+            
+            # Return task information
+            result_url = request.build_absolute_uri(
+                reverse('task_status_api', args=[task.id])
+            )
+            
+            return JsonResponse({
+                'task_id': task.id,
+                'status': 'pending',
+                'result_url': result_url,
+                'message': 'Analysis started successfully'
+            })
+            
+        except Exception as e:
+            task.status = 'failed'
+            task.error_message = str(e)
+            task.completed_at = timezone.now()
+            task.save()
+            
+            return JsonResponse({
+                'error': 'Analysis failed',
+                'message': str(e),
+                'task_id': task.id
+            }, status=500)
+    
+    except json.JSONDecodeError:
+        return JsonResponse({
+            'error': 'Invalid JSON',
+            'message': 'Request body must be valid JSON'
+        }, status=400)
+    except Exception as e:
+        return JsonResponse({
+            'error': 'Internal server error',
+            'message': str(e)
+        }, status=500)
+
+
+@csrf_exempt
+@require_api_key
+def task_status_api(request, task_id):
+    """
+    API endpoint to check analysis task status
+    """
+    try:
+        task = AnalysisTask.objects.get(id=task_id, api_key=request.api_key)
+        
+        response_data = {
+            'task_id': task.id,
+            'purl': task.purl,
+            'status': task.status,
+            'created_at': task.created_at.isoformat(),
+            'package_name': task.package_name,
+            'package_version': task.package_version,
+            'ecosystem': task.ecosystem
+        }
+        
+        if task.started_at:
+            response_data['started_at'] = task.started_at.isoformat()
+        
+        if task.completed_at:
+            response_data['completed_at'] = task.completed_at.isoformat()
+        
+        if task.error_message:
+            response_data['error_message'] = task.error_message
+        
+        if task.status == 'completed' and task.report:
+            response_data['result_url'] = request.build_absolute_uri(
+                reverse('get_report', args=[task.report.id])
+            )
+        
+        return JsonResponse(response_data)
+        
+    except AnalysisTask.DoesNotExist:
+        return JsonResponse({
+            'error': 'Task not found',
+            'message': 'Analysis task not found or access denied'
+        }, status=404)
+   
 
 
 def configure(request):

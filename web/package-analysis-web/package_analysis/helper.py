@@ -820,8 +820,6 @@ class Helper:
 
 
 
-
-
 class Report:
 
     @staticmethod
@@ -1044,3 +1042,6 @@ class Report:
             pass
         
         return results
+
+
+

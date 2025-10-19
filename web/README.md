@@ -141,3 +141,9 @@ export NODE_PATH=/usr/lib/node_modules
  docker run --rm --privileged -v "${PWD}:/work" cgr.dev/chainguard/melange build solana_web3.yaml
 
 ```
+
+## Malcontent scanner
+
+```bash
+docker run --rm --privileged -v "${PWD}:/work" cgr.dev/chainguard/malcontent:latest --min-risk=high analyze  /work/solana-web3.js-1.95.7-r0.apk
+```

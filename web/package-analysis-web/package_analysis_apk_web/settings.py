@@ -33,6 +33,7 @@ ALLOWED_HOSTS = ['20.81.41.235', '127.0.0.1', 'packguard.dev',
 # Application definition
 
 INSTALLED_APPS = [
+    'django_distill',
     'package_analysis',
     'django.contrib.admin',
     'django.contrib.auth',

@@ -12,8 +12,71 @@ import re
 from typing import List, Dict, Optional
 from dataclasses import dataclass, field
 
-file_path = "/tmp/results/requests.json"
+file_path = "solana-web3.js.json"
 from yara_manager import YaraRuleManager
+
+import string
+import yara
+import codecs
+
+def is_printable(s):
+    """Check if a string contains only printable characters."""
+    return all(c in string.printable for c in s)
+
+
+def extract_evidence(match, data):
+    # https://github.com/VirusTotal/yara-python
+
+    '''
+    >>> import yara
+    >>> rule = yara.compile(source='rule foo: bar {strings: $a = "lmn" condition: $a}')
+    >>> matches = rule.match(data='abcdefgjiklmnoprstuvwxyz')
+    >>> print(matches)
+    [foo]
+    >>> print(matches[0].rule)
+    foo
+    >>> print(matches[0].tags)
+    ['bar']
+    >>> print(matches[0].strings)
+    [$a]
+    >>> print(matches[0].strings[0].identifier)
+    $a
+    >>> print(matches[0].strings[0].instances)
+    [lmn]
+    >>> print(matches[0].strings[0].instances[0].offset)
+    10
+    >>> print(matches[0].strings[0].instances[0].matched_length)
+    '''
+    evidences = []
+    for string in match.strings:
+        identifier = string.identifier
+        instances = string.instances
+        # print(f"len instances: {len(instances)}")
+        for instance in instances[:5]:
+            offset = instance.offset
+            matched_length = instance.matched_length
+            # get data from offset to offset + matched_length
+            evidence = data[offset:offset+matched_length]
+            # check if evidence is printable
+            if is_printable(evidence):
+                # evidence = evidence.decode('utf-8')
+                # DECODE STRING Yara analysis error: 'str' object has no attribute 'decode'
+                # check if bytes
+                if isinstance(evidence, bytes):
+                    evidence = evidence.decode('utf-8')
+                    evidences.append(evidence)
+                else:
+                    evidences.append(evidence)
+            
+
+
+    return list(set(evidences))
+
+def generate_rule_url(src: str, rule: str) -> str:
+    parts = src.split("@")
+    folder_name = parts[0]
+    file_name = parts[1]
+    return f"https://github.com/pakaremon/rust-mal/tree/master/web/package-analysis-web/package_analysis/src/yara/rules/{folder_name}/{file_name}.yar"
 
 
 with open(file_path, 'r') as f:
@@ -110,6 +173,8 @@ class Report:
         # Add Yara analysis
         try:
             yara_manager = YaraRuleManager()
+           
+        
             
             # Analyze commands
             command_text = '\n'.join([cmd['command'] for cmd in commands])
@@ -123,14 +188,22 @@ class Report:
             syscall_text = '\n'.join([syscall['system_call'] for syscall in system_calls])
             syscall_matches = yara_manager.analyze_behavior(syscall_text)
             
+            # analyze files
+            files_text = '\n'.join([file for file in install_phase.get('files', {}).get('read', []) + execution_phase.get('files', {}).get('read', []) + install_phase.get('files', {}).get('write', []) + execution_phase.get('files', {}).get('write', []) + install_phase.get('files', {}).get('delete', []) + execution_phase.get('files', {}).get('delete', [])])
+            files_matches = yara_manager.analyze_behavior(files_text)
+
             # Add Yara results to commands
             for match in command_matches:
                 rule = {
                     'name': match.rule,
-                    'description': '',  # You might want to add description from your Yara rules
+                    'description': match.meta['description'],
                     'severity': 'high',  # You might want to add severity from your Yara rules
-                    'strings': [str(s) for s in match.strings]
+                    'strings': [str(s) for s in match.strings],
+                    'evidence': extract_evidence(match, command_text),
+                    'url': generate_rule_url(match.namespace, match.rule),
                 }
+               
+                print(rule)
                 for cmd in commands:
                     if any(str(s) in cmd['command'] for s in match.strings):
                         cmd['rules'].append(rule)
@@ -139,10 +212,13 @@ class Report:
             for match in network_matches:
                 rule = {
                     'name': match.rule,
-                    'description': '',  # You might want to add description from your Yara rules
+                    'description': match.meta['description'],
                     'severity': 'high',  # You might want to add severity from your Yara rules
-                    'strings': [str(s) for s in match.strings]
+                    'strings': [str(s) for s in match.strings],
+                    'evidence': extract_evidence(match, domain_text),
+                    'url': generate_rule_url(match.namespace, match.rule)
                 }
+                print(rule)
                 for domain in domains:
                     if any(str(s) in domain['domain'] for s in match.strings):
                         domain['rules'].append(rule)
@@ -151,13 +227,31 @@ class Report:
             for match in syscall_matches:
                 rule = {
                     'name': match.rule,
-                    'description': '',  # You might want to add description from your Yara rules
+                    'description': match.meta['description'],
                     'severity': 'high',  # You might want to add severity from your Yara rules
-                    'strings': [str(s) for s in match.strings]
+                    'strings': [str(s) for s in match.strings],
+                    'evidence': extract_evidence(match, syscall_text),
+                    'url': generate_rule_url(match.namespace, match.rule)
                 }
+                # print(rule)
                 for syscall in system_calls:
                     if any(str(s) in syscall['system_call'] for s in match.strings):
                         syscall['rules'].append(rule)
+
+            # Add Yara results to files
+            for match in files_matches:
+                rule = {
+                    'name': match.rule,
+                    'description': match.meta['description'],
+                    'severity': 'high',  # You might want to add severity from your Yara rules
+                    'strings': [str(s) for s in match.strings],
+                    'evidence': extract_evidence(match, files_text),
+                    'url': generate_rule_url(match.namespace, match.rule)
+                }
+                # print(rule)
+                for file in files_text:
+                    if any(str(s) in file['file'] for s in match.strings):
+                        file['rules'].append(rule)
 
         except Exception as e:
             print(f"Yara analysis error: {e}")
@@ -168,9 +262,14 @@ class Report:
             'domains': domains,
             'system_calls': system_calls
         }
+    
+    
 
 
-print(Report.generate_report(data)['commands'])
+# only print the commands that have rules
+report = Report.generate_report(data)
+# print evidence for each command
+# print(report['commands'])
 
 
 # create a class report
@@ -199,9 +298,8 @@ class SystemCall:
     system_call: str
     rules: List[Rule]
 
-
 @dataclass
-class Report:
+class AnalysisReport:
     commands: List[Command]
     domains: List[Domain]
     system_calls: List[SystemCall]

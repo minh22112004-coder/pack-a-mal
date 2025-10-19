@@ -14,3 +14,8 @@ __pycache__/
 web/package-analysis-web/oss-gadget.log
 web/package-analysis-web/media
 web/package-analysis-web/package_analysis/src/lastpymile/lastpymile/__pycache__
+web/package-analysis-web/package_analysis/migrations
+web/package-analysis-web/package_analysis/management/__pycache__
+# Do not include __pycache__ folders
+**/__pycache__/
+web/docs
