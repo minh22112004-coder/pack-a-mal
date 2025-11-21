@@ -815,8 +815,88 @@ class Helper:
     
             return reports
         except subprocess.CalledProcessError as e:
-            print(f"An error occurred while running the analysis: {e.stderr}")
-            raise
+            # Enhanced error handling with detailed error information
+            error_details = {
+                'error_type': 'analysis_execution_failed',
+                'exit_code': e.returncode,
+                'command': command,
+                'stderr': e.stderr,
+                'stdout': e.stdout if hasattr(e, 'stdout') else None,
+                'package_name': package_name,
+                'package_version': package_version,
+                'ecosystem': ecosystem
+            }
+            
+            # Categorize the error based on exit code and stderr content
+            if e.returncode == 1:
+                if 'docker' in e.stderr.lower() and ('not found' in e.stderr.lower() or 'pull' in e.stderr.lower()):
+                    error_details['error_category'] = 'docker_image_error'
+                    error_details['error_message'] = f"Docker image error: {e.stderr}"
+                elif 'timeout' in e.stderr.lower():
+                    error_details['error_category'] = 'timeout_error'
+                    error_details['error_message'] = f"Analysis timeout: {e.stderr}"
+                elif 'permission' in e.stderr.lower() or 'access' in e.stderr.lower():
+                    error_details['error_category'] = 'permission_error'
+                    error_details['error_message'] = f"Permission error: {e.stderr}"
+                else:
+                    error_details['error_category'] = 'analysis_error'
+                    error_details['error_message'] = f"Analysis failed: {e.stderr}"
+            elif e.returncode == 125:
+                error_details['error_category'] = 'docker_error'
+                error_details['error_message'] = f"Docker execution error: {e.stderr}"
+            elif e.returncode == 127:
+                error_details['error_category'] = 'command_not_found'
+                error_details['error_message'] = f"Command not found: {e.stderr}"
+            else:
+                error_details['error_category'] = 'unknown_error'
+                error_details['error_message'] = f"Unknown error (exit code {e.returncode}): {e.stderr}"
+            
+            print(f"Analysis failed with error: {error_details['error_message']}")
+            logger.error(f"Analysis failed: {error_details}")
+            
+            # Create a custom exception with detailed error information
+            class AnalysisError(Exception):
+                def __init__(self, error_details):
+                    self.error_details = error_details
+                    super().__init__(error_details['error_message'])
+            
+            raise AnalysisError(error_details)
+        except json.JSONDecodeError as e:
+            # Handle JSON parsing errors
+            error_details = {
+                'error_type': 'json_parsing_failed',
+                'error_category': 'result_parsing_error',
+                'error_message': f"Failed to parse analysis results: {str(e)}",
+                'package_name': package_name,
+                'package_version': package_version,
+                'ecosystem': ecosystem,
+                'command': command
+            }
+            
+            class AnalysisError(Exception):
+                def __init__(self, error_details):
+                    self.error_details = error_details
+                    super().__init__(error_details['error_message'])
+            
+            raise AnalysisError(error_details)
+        except FileNotFoundError as e:
+            # Handle missing result file
+            error_details = {
+                'error_type': 'result_file_not_found',
+                'error_category': 'result_file_error',
+                'error_message': f"Analysis result file not found: {str(e)}",
+                'package_name': package_name,
+                'package_version': package_version,
+                'ecosystem': ecosystem,
+                'command': command
+            }
+            
+            class AnalysisError(Exception):
+                def __init__(self, error_details):
+                    self.error_details = error_details
+                    super().__init__(error_details['error_message'])
+            
+            raise AnalysisError(error_details)
 
 
 

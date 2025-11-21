@@ -14,10 +14,100 @@ from collections import Counter
 from concurrent.futures import ThreadPoolExecutor
 from .src.py2src.py2src.url_finder import   URLFinder
 from .utils import PURLParser, validate_purl_format
+from .api_utils import json_success, json_error, api_handler
 from .auth import require_api_key
 from django.utils import timezone
 from django.urls import reverse
+from django.conf import settings
+from .queue_manager import queue_manager
 
+
+def save_professional_report(completed_task, request):
+    """
+    Save analysis report with simplified folder structure: reports/ecosystem/package_name/version.json
+    Returns download URL and report metadata
+    """
+    import os
+    from django.conf import settings
+    from datetime import datetime
+    
+    # Extract the report data from the JSONField
+    report_data = completed_task.report
+    if hasattr(report_data, 'report'):
+        # If it's a ReportDynamicAnalysis object, get the report field
+        report_json = report_data.report
+    else:
+        # If it's already the report data
+        report_json = report_data
+    
+    # Create simplified folder structure: reports/ecosystem/package_name/
+    save_dir = getattr(settings, 'MEDIA_ROOT', os.path.join(os.path.dirname(os.path.abspath(__file__)), 'media'))
+    ecosystem = completed_task.ecosystem.lower()
+    now = datetime.now()
+    
+    # Create organized folder structure without dates
+    reports_base = os.path.join(save_dir, 'reports')
+    ecosystem_dir = os.path.join(reports_base, ecosystem)
+    package_name = completed_task.package_name.replace('/', '_').replace('\\', '_')
+    package_dir = os.path.join(ecosystem_dir, package_name)
+    
+    os.makedirs(package_dir, exist_ok=True)
+    
+    # Generate simple filename: version.json
+    json_filename = f"{completed_task.package_version}.json"
+    json_path = os.path.join(package_dir, json_filename)
+    
+    # Add comprehensive metadata to the report
+    enhanced_report = {
+        "metadata": {
+            # "schema_version": "1.0",
+            # "analysis_id": completed_task.id,
+            # "report_id": completed_task.report.id,
+            "created_at": now.isoformat(),
+            "package": {
+                "name": completed_task.package_name,
+                "version": completed_task.package_version,
+                "ecosystem": completed_task.ecosystem,
+                "purl": completed_task.purl
+            },
+            "analysis": {
+                "status": "completed",
+                "started_at": completed_task.started_at.isoformat() if completed_task.started_at else None,
+                "completed_at": completed_task.completed_at.isoformat() if completed_task.completed_at else None,
+                "duration_seconds": completed_task.report.time if hasattr(completed_task.report, 'time') else None
+            },
+            "api": {
+                "version": "1.0",
+                "endpoint": "analyze_api",
+                "generated_by": "Pack-a-mal Analysis Platform"
+            }
+        },
+        "analysis_results": report_json
+    }
+    
+    # Save the enhanced report
+    with open(json_path, 'w', encoding='utf-8') as f:
+        json.dump(enhanced_report, f, ensure_ascii=False, indent=2)
+    
+    # Generate professional download URL
+    media_url = getattr(settings, 'MEDIA_URL', '/media/')
+    relative_path = os.path.relpath(json_path, save_dir)
+    # Use proper URL joining instead of os.path.join for URLs
+    if media_url.endswith('/'):
+        download_url = request.build_absolute_uri(media_url + relative_path)
+    else:
+        download_url = request.build_absolute_uri(media_url + '/' + relative_path)
+    
+    # Create report metadata for API response
+    report_metadata = {
+        "filename": json_filename,
+        "size_bytes": os.path.getsize(json_path),
+        "created_at": now.isoformat(),
+        "download_url": download_url,
+        "folder_structure": f"reports/{ecosystem}/{package_name}/"
+    }
+    
+    return download_url, report_metadata
 
 
 def save_report(reports):
@@ -189,7 +279,7 @@ def submit_sample(request):
 
             
             # save_report(reports)
-            latest_report = Report.objects.latest('id')
+            latest_report = ReportDynamicAnalysis.objects.latest('id')
             reports['id'] = latest_report.id
             return JsonResponse(reports)
     else:
@@ -224,11 +314,11 @@ def upload_sample(request):
 
 def report_detail(request, report_id):
     '''Report detail analysis result of the package'''
-    report = Report.objects.get(pk=report_id)
+    report = ReportDynamicAnalysis.objects.get(pk=report_id)
     return render(request, 'package_analysis/report_detail.html', {'report': report})
 
 def get_all_report(request):
-    report = Report.objects.all()
+    report = ReportDynamicAnalysis.objects.all()
     results = {}
     for r in report:
         results[r.id] = {
@@ -242,21 +332,13 @@ def get_all_report(request):
     return JsonResponse(results)
 
 def get_report(request, report_id):
-    report = Report.objects.get(pk=report_id)
+    report = ReportDynamicAnalysis.objects.get(pk=report_id)
     results = {
         'package_name': report.package.package_name,
         'package_version': report.package.package_version,
         'ecosystem': report.package.ecosystem,
         'time': report.time,
-        'num_files': report.num_files,
-        'num_commands': report.num_commands,
-        'num_network_connections': report.num_network_connections,
-        'num_system_calls': report.num_system_calls,
-        'files': report.files,
-        'dns': report.dns,
-        'ips': report.ips,
-        'commands': report.commands,
-        'syscalls': report.syscalls,
+        'report_data': report.report,
     }
     return JsonResponse(results)
 
@@ -392,209 +474,194 @@ def get_pypi_versions(request):
     return JsonResponse({"versions":versions})
 
 
+def get_predicted_download_url(request, package_name, package_version, ecosystem):
+    '''
+    Get the predicted download URL for the final JSON report
+    Args:
+        request: the request object
+        package_name: the name of the package
+        package_version: the version of the package
+        ecosystem: the ecosystem of the package
+    Returns:
+        the predicted download URL
+    '''
+    ecosystem_lower = ecosystem.lower()
+    sanitized_package_name = package_name.replace('/', '_').replace('\\', '_')
+    media_url = getattr(settings, 'MEDIA_URL', '/media/')
+    relative_path = f"reports/{ecosystem_lower}/{sanitized_package_name}/{package_version}.json"
+    return request.build_absolute_uri((media_url + relative_path) if media_url.endswith('/') else (media_url + '/' + relative_path))
+
+
 @csrf_exempt
 @require_api_key
+@api_handler
 def analyze_api(request):
     """
     API endpoint to analyze packages via PURL
     Accepts POST requests with PURL in JSON body
     Returns analysis task ID and result URL
+    Uses queue system to ensure only one container runs at a time
     """
     if request.method != 'POST':
-        return JsonResponse({
-            'error': 'Method not allowed',
-            'message': 'Only POST requests are supported'
-        }, status=405)
+        return json_error(request, error='Method not allowed', message='Only POST requests are supported', status=405)
     
     try:
         # Parse JSON request body
         data = json.loads(request.body)
         purl = data.get('purl')
+        priority = data.get('priority', 0)  # Allow priority to be specified
         
         if not purl:
-            return JsonResponse({
-                'error': 'Missing PURL',
-                'message': 'PURL parameter is required'
-            }, status=400)
+            return json_error(request, error='Missing PURL', message='PURL parameter is required', status=400)
         
         # Validate PURL format
         if not validate_purl_format(purl):
-            return JsonResponse({
-                'error': 'Invalid PURL format',
-                'message': 'PURL must be a valid package URL starting with pkg:'
-            }, status=400)
+            return json_error(request, error='Invalid PURL format', message='PURL must be a valid package URL starting with pkg:', status=400)
         
         # Parse PURL to extract package information
         try:
             package_name, package_version, ecosystem = PURLParser.extract_package_info(purl)
         except ValueError as e:
-            return JsonResponse({
-                'error': 'PURL parsing failed',
-                'message': str(e)
-            }, status=400)
+            return json_error(request, error='PURL parsing failed', message=str(e), status=400)
         
-        # Check for existing tasks (completed, running, or pending) within the last 24 hours
-        existing_tasks = AnalysisTask.objects.filter(
+        # First, check for ANY completed task for this PURL (regardless of time)
+        # This ensures we always return cached results if they exist
+        completed_task = AnalysisTask.objects.filter(
             purl=purl,
-            created_at__gte=timezone.now() - timezone.timedelta(hours=24)
-        ).order_by('-created_at')
+            status='completed',
+            report__isnull=False
+        ).order_by('-completed_at').first()
         
-        # Debug: Print existing tasks for troubleshooting
-        print(f"DEBUG: Found {existing_tasks.count()} existing tasks for PURL: {purl}")
-        for task in existing_tasks:
-            print(f"  Task {task.id}: status={task.status}, created={task.created_at}")
-        
-        # Check for completed task first
-        completed_task = existing_tasks.filter(status='completed').first()
-        if completed_task and completed_task.report:
+        if completed_task:
+            print(f"DEBUG: Found completed task {completed_task.id} for PURL: {purl}")
+            
             # Return existing analysis result
             result_url = request.build_absolute_uri(
                 reverse('get_report', args=[completed_task.report.id])
             )
 
-            # Save the completed analysis report as a downloadable JSON file on the server,
-
-            import os
-            from django.conf import settings
-
-            # Extract the report data from the JSONField
-            report_data = completed_task.report
-            if hasattr(report_data, 'report'):
-                # If it's a ReportDynamicAnalysis object, get the report field
-                report_json = report_data.report
-            else:
-                # If it's already the report data
-                report_json = report_data
-
-            # Define a directory to save JSON files (e.g., MEDIA_ROOT/analysis_reports/)
-            save_dir = getattr(settings, 'MEDIA_ROOT', os.path.join(os.path.dirname(os.path.abspath(__file__)), 'media'))
-            reports_subdir = os.path.join(save_dir, 'analysis_reports')
-            os.makedirs(reports_subdir, exist_ok=True)
-
-            # Save JSON with a unique filename per report (e.g., by report id)
-            json_filename = f"report_{completed_task.report.id}.json"
-            json_path = os.path.join(reports_subdir, json_filename)
-
-            # Save the file
-            with open(json_path, 'w', encoding='utf-8') as f:
-                json.dump(report_json, f, ensure_ascii=False, indent=2)
-
-            # Optionally, generate a URL for user access
-            # This assumes MEDIA_URL is configured, and files are served from MEDIA_ROOT
-            media_url = getattr(settings, 'MEDIA_URL', '/media/')
-            download_url = request.build_absolute_uri( 
-                os.path.join(media_url, 'analysis_reports', json_filename)
-            )
-
-            # Add download_url to the response
+            # Save the completed analysis report as a downloadable JSON file on the server
+            download_url, report_metadata = save_professional_report(completed_task, request)
 
             return JsonResponse({
                 'task_id': completed_task.id,
                 'status': 'completed',
                 'result_url': download_url,
+                'report_metadata': report_metadata,
                 'message': 'Analysis already exists (cached result)'
             })
         
-        # Check for running or pending task
-        active_task = existing_tasks.filter(status__in=['running', 'pending']).first()
+        # Check for existing active tasks (running, queued, or pending) within the last 24 hours
+        existing_active_tasks = AnalysisTask.objects.filter(
+            purl=purl,
+            status__in=['running', 'queued', 'pending'],
+            created_at__gte=timezone.now() - timezone.timedelta(hours=24)
+        ).order_by('-created_at')
+        
+        # Debug: Print existing active tasks for troubleshooting
+        print(f"DEBUG: Found {existing_active_tasks.count()} existing active tasks for PURL: {purl}")
+        for task in existing_active_tasks:
+            print(f"  Task {task.id}: status={task.status}, created={task.created_at}")
+        
+        # Check for running, queued, or pending task
+        active_task = existing_active_tasks.first()
         if active_task:
-            return JsonResponse({
+            # Build predicted download URL for the final JSON report
+            predicted_download_url = get_predicted_download_url(request, package_name, package_version, ecosystem)
+
+            status_url = request.build_absolute_uri(
+                reverse('task_status_api', args=[active_task.id])
+            )
+
+            # Get queue position if task is queued
+            queue_position = None
+            if active_task.status == 'queued':
+                queue_position = active_task.queue_position
+
+            return json_success(request, {
                 'task_id': active_task.id,
                 'status': active_task.status,
-                'result_url': request.build_absolute_uri(
-                    reverse('task_status_api', args=[active_task.id])
-                ),
+                'status_url': status_url,
+                'result_url': predicted_download_url,
+                'queue_position': queue_position,
                 'message': f'Analysis already {active_task.status}'
             })
         
         # Final check before creating task (prevent race conditions)
-        last_check = AnalysisTask.objects.filter(
-            purl=purl,
-            status__in=['pending', 'running'],
+        last_check = existing_active_tasks.filter(
             created_at__gte=timezone.now() - timezone.timedelta(minutes=1)
         ).first()
         
         if last_check:
-            return JsonResponse({
+            queue_position = None
+            if last_check.status == 'queued':
+                queue_position = last_check.queue_position
+                
+            return json_success(request, {
                 'task_id': last_check.id,
                 'status': last_check.status,
-                'result_url': request.build_absolute_uri(
-                    reverse('task_status_api', args=[last_check.id])
-                ),
+                'queue_position': queue_position,
                 'message': f'Analysis already {last_check.status} (race condition prevented)'
             })
         
+        # Idempotency: allow client to pass X-Idempotency-Key header to dedupe
+        idempotency_key = request.META.get('HTTP_X_IDEMPOTENCY_KEY')
+
         # Create new analysis task
-        task = AnalysisTask.objects.create(
+        task_defaults = dict(
             api_key=request.api_key,
             purl=purl,
             package_name=package_name,
             package_version=package_version,
             ecosystem=ecosystem,
-            status='pending'
+            status='pending',
+            priority=priority,
         )
+        if idempotency_key:
+            task_defaults['idempotency_key'] = idempotency_key
+
+        # If idempotency key present and an existing task exists, reuse it
+        if idempotency_key:
+            existing_idem = AnalysisTask.objects.filter(api_key=request.api_key, idempotency_key=idempotency_key).order_by('-created_at').first()
+            if existing_idem:
+                queue_position = None
+                if existing_idem.status == 'queued':
+                    queue_position = existing_idem.queue_position
+                    
+                return json_success(request, {
+                    'task_id': existing_idem.id,
+                    'status': existing_idem.status,
+                    'queue_position': queue_position,
+                    'result_url': request.build_absolute_uri(
+                        reverse('task_status_api', args=[existing_idem.id])
+                    ),
+                    'message': 'Idempotent replay'
+                })
+
+        task = AnalysisTask.objects.create(**task_defaults)
         
         print(f"DEBUG: Created new task {task.id} for PURL: {purl}")
         
-        # Start analysis asynchronously
+        # Add task to queue instead of running immediately
         try:
-            # Run analysis in background thread
-            from threading import Thread
-            
-            def run_analysis():
-                try:
-                    task.status = 'running'
-                    task.started_at = timezone.now()
-                    task.save()
-                    
-                    # Run the analysis using existing Helper methods
-                    with ThreadPoolExecutor() as executor:
-                        future_reports = executor.submit(Helper.run_package_analysis, package_name, package_version, ecosystem)
-
-                        reports = future_reports.result()
-                    
-                    # Save the report
-                    # TODO: correct save_report function to match with the, the structure of saved folder is :
-                    # 
-                    # TODO 1 : the dynamic analysis report should be save as jon file in server side
-                    # TODO 2: the json response to client will provide the url of the json file on the server side
-                    # TODO 3: beside the link, it also include all the json repports except system calls, but instead, including the frequency of system call names enter
-                    # TODO 4: we only save the information of packages: name, version, ecosystem,
-                    #  date of the latest analysis, 
-                     
-                    # Helper.run_package_analysis function
-                    save_report(reports)
-                    latest_report = ReportDynamicAnalysis.objects.latest('id')
-                    
-                    # Update task with completed status
-                    task.status = 'completed'
-                    task.completed_at = timezone.now()
-                    task.report = latest_report
-                    task.save()
-                    
-                except Exception as e:
-                    # Update task with error status
-                    task.status = 'failed'
-                    task.error_message = str(e)
-                    task.completed_at = timezone.now()
-                    task.save()
-            
-            # Start analysis thread
-            analysis_thread = Thread(target=run_analysis)
-            analysis_thread.daemon = True
-            analysis_thread.start()
+            queue_position = queue_manager.add_task_to_queue(task)
             
             # Return task information
-            result_url = request.build_absolute_uri(
+            status_url = request.build_absolute_uri(
                 reverse('task_status_api', args=[task.id])
             )
-            
-            return JsonResponse({
+
+            # Build predicted download URL for the final JSON report
+            predicted_download_url = get_predicted_download_url(request, package_name, package_version, ecosystem)
+
+            return json_success(request, {
                 'task_id': task.id,
-                'status': 'pending',
-                'result_url': result_url,
-                'message': 'Analysis started successfully'
-            })
+                'status': 'queued',
+                'queue_position': queue_position,
+                'status_url': status_url,
+                'result_url': predicted_download_url,
+                'message': f'Analysis queued at position {queue_position}'
+            }, status=202)
             
         except Exception as e:
             task.status = 'failed'
@@ -602,64 +669,91 @@ def analyze_api(request):
             task.completed_at = timezone.now()
             task.save()
             
-            return JsonResponse({
-                'error': 'Analysis failed',
-                'message': str(e),
-                'task_id': task.id
-            }, status=500)
+            return json_error(request, error='Failed to queue analysis', message=str(e), status=500)
     
-    except json.JSONDecodeError:
-        return JsonResponse({
-            'error': 'Invalid JSON',
-            'message': 'Request body must be valid JSON'
-        }, status=400)
     except Exception as e:
-        return JsonResponse({
-            'error': 'Internal server error',
-            'message': str(e)
-        }, status=500)
+        # Fallback; decorator also handles this
+        return json_error(request, error='Internal server error', message=str(e), status=500)
 
 
 @csrf_exempt
-@require_api_key
+@api_handler
 def task_status_api(request, task_id):
     """
     API endpoint to check analysis task status
     """
     try:
-        task = AnalysisTask.objects.get(id=task_id, api_key=request.api_key)
-        
+        task = AnalysisTask.objects.get(id=task_id)
+
+        expected_download_url = get_predicted_download_url(request, task.package_name, task.package_version, task.ecosystem)
         response_data = {
             'task_id': task.id,
             'purl': task.purl,
             'status': task.status,
             'created_at': task.created_at.isoformat(),
+            'expected_download_url': expected_download_url,
             'package_name': task.package_name,
             'package_version': task.package_version,
-            'ecosystem': task.ecosystem
+            'ecosystem': task.ecosystem,
+            'priority': task.priority,
+            'queue_position': task.queue_position if task.status == 'queued' else None,
+            'queued_at': task.queued_at.isoformat() if task.queued_at else None,
+            'timeout_minutes': task.timeout_minutes,
+            'container_id': task.container_id,
+            'last_heartbeat': task.last_heartbeat.isoformat() if task.last_heartbeat else None
         }
         
         if task.started_at:
             response_data['started_at'] = task.started_at.isoformat()
+            
+            # Add remaining time for running tasks
+            if task.status == 'running':
+                remaining_time = task.get_remaining_time_minutes()
+                response_data['remaining_time_minutes'] = remaining_time
+                response_data['is_timed_out'] = task.is_timed_out()
         
         if task.completed_at:
             response_data['completed_at'] = task.completed_at.isoformat()
         
         if task.error_message:
             response_data['error_message'] = task.error_message
+            response_data['error_category'] = task.error_category
+            if task.error_details:
+                response_data['error_details'] = task.error_details
         
         if task.status == 'completed' and task.report:
             response_data['result_url'] = request.build_absolute_uri(
                 reverse('get_report', args=[task.report.id])
             )
+            if task.download_url:
+                response_data['download_url'] = task.download_url
+                # Also provide report metadata if available
+                try:
+                    import os
+                    from django.conf import settings
+                    if task.download_url:
+                        # Extract filename from download URL
+                        filename = os.path.basename(task.download_url)
+                        save_dir = getattr(settings, 'MEDIA_ROOT', os.path.join(os.path.dirname(os.path.abspath(__file__)), 'media'))
+                        # Try to find the file and get its metadata
+                        for root, dirs, files in os.walk(os.path.join(save_dir, 'reports')):
+                            if filename in files:
+                                file_path = os.path.join(root, filename)
+                                response_data['report_metadata'] = {
+                                    'filename': filename,
+                                    'size_bytes': os.path.getsize(file_path),
+                                    'created_at': task.completed_at.isoformat() if task.completed_at else None,
+                                    'download_url': task.download_url,
+                                    'folder_structure': os.path.relpath(root, save_dir) + '/'
+                                }
+                                break
+                except Exception as e:
+                    print(f"Warning: Could not generate report metadata: {e}")
         
-        return JsonResponse(response_data)
+        return json_success(request, response_data)
         
     except AnalysisTask.DoesNotExist:
-        return JsonResponse({
-            'error': 'Task not found',
-            'message': 'Analysis task not found or access denied'
-        }, status=404)
+        return json_error(request, error='Task not found', message='Analysis task not found or access denied', status=404)
    
 
 
@@ -674,3 +768,141 @@ def results(request):
 
 
 
+
+@csrf_exempt
+@require_api_key
+@api_handler
+def list_tasks_api(request):
+    """
+    Paginated list of analysis tasks for the caller's API key.
+    Query params: page (default 1), page_size (default 20, max 100), status
+    """
+    if request.method != 'GET':
+        return json_error(request, error='Method not allowed', message='Only GET requests are supported', status=405)
+
+    try:
+        page = int(request.GET.get('page', '1'))
+        page_size = min(100, max(1, int(request.GET.get('page_size', '20'))))
+    except ValueError:
+        return json_error(request, error='Invalid pagination', message='page and page_size must be integers', status=400)
+
+    status_filter = request.GET.get('status')
+    qs = AnalysisTask.objects.filter(api_key=request.api_key).order_by('-created_at')
+    if status_filter:
+        qs = qs.filter(status=status_filter)
+
+    total = qs.count()
+    start = (page - 1) * page_size
+    end = start + page_size
+    items = [
+        {
+            'task_id': t.id,
+            'purl': t.purl,
+            'status': t.status,
+            'created_at': t.created_at.isoformat(),
+            'package_name': t.package_name,
+            'package_version': t.package_version,
+            'ecosystem': t.ecosystem,
+            'priority': t.priority,
+            'queue_position': t.queue_position if t.status == 'queued' else None,
+            'queued_at': t.queued_at.isoformat() if t.queued_at else None,
+            'result_url': (request.build_absolute_uri(reverse('get_report', args=[t.report.id])) if t.report else None),
+            'download_url': t.download_url,
+            'error_message': t.error_message if t.error_message else None,
+            'error_category': t.error_category if t.error_category else None,
+        }
+        for t in qs[start:end]
+    ]
+
+    return json_success(request, {
+        'items': items,
+        'page': page,
+        'page_size': page_size,
+        'total': total,
+    })
+
+
+@csrf_exempt
+@api_handler
+def queue_status_api(request):
+    """
+    API endpoint to check the current queue status.
+    Shows all queued and running tasks across all API keys.
+    """
+    if request.method != 'GET':
+        return json_error(request, error='Method not allowed', message='Only GET requests are supported', status=405)
+    
+    try:
+        queue_status = queue_manager.get_queue_status()
+        return json_success(request, queue_status)
+    except Exception as e:
+        return json_error(request, error='Failed to get queue status', message=str(e), status=500)
+
+
+@csrf_exempt
+@require_api_key
+@api_handler
+def task_queue_position_api(request, task_id):
+    """
+    API endpoint to check the queue position of a specific task.
+    """
+    if request.method != 'GET':
+        return json_error(request, error='Method not allowed', message='Only GET requests are supported', status=405)
+    
+    try:
+        task = AnalysisTask.objects.get(id=task_id, api_key=request.api_key)
+        queue_position = queue_manager.get_task_queue_position(task_id)
+        
+        return json_success(request, {
+            'task_id': task_id,
+            'status': task.status,
+            'queue_position': queue_position,
+            'purl': task.purl,
+            'package_name': task.package_name,
+            'package_version': task.package_version,
+            'ecosystem': task.ecosystem
+        })
+    except AnalysisTask.DoesNotExist:
+        return json_error(request, error='Task not found', message='Analysis task not found or access denied', status=404)
+    except Exception as e:
+        return json_error(request, error='Failed to get queue position', message=str(e), status=500)
+
+
+@csrf_exempt
+@api_handler
+def timeout_status_api(request):
+    """
+    API endpoint to check timeout status of running tasks.
+    """
+    if request.method != 'GET':
+        return json_error(request, error='Method not allowed', message='Only GET requests are supported', status=405)
+    
+    try:
+        timeout_status = queue_manager.get_timeout_status()
+        return json_success(request, timeout_status)
+    except Exception as e:
+        return json_error(request, error='Failed to get timeout status', message=str(e), status=500)
+
+
+@csrf_exempt
+@api_handler
+def check_timeouts_api(request):
+    """
+    API endpoint to manually trigger timeout check and cleanup.
+    """
+    if request.method != 'POST':
+        return json_error(request, error='Method not allowed', message='Only POST requests are supported', status=405)
+    
+    try:
+        # Trigger timeout check
+        queue_manager.check_timeouts()
+        
+        # Get updated status
+        timeout_status = queue_manager.get_timeout_status()
+        
+        return json_success(request, {
+            'message': 'Timeout check completed',
+            'status': timeout_status
+        })
+    except Exception as e:
+        return json_error(request, error='Failed to check timeouts', message=str(e), status=500)

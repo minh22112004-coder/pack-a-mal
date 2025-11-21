@@ -8,6 +8,11 @@ urlpatterns = [
     # RESTful API endpoints
     path("api/v1/analyze/", views.analyze_api, name="analyze_api"),
     path("api/v1/task/<int:task_id>/", views.task_status_api, name="task_status_api"),
+    path("api/v1/reports/", views.list_tasks_api, name="list_tasks_api"),
+    path("api/v1/queue/status/", views.queue_status_api, name="queue_status_api"),
+    path("api/v1/task/<int:task_id>/queue/", views.task_queue_position_api, name="task_queue_position_api"),
+    path("api/v1/timeout/status/", views.timeout_status_api, name="timeout_status_api"),
+    path("api/v1/timeout/check/", views.check_timeouts_api, name="check_timeouts_api"),
     path("contact/", views.contact, name="contact"),
     path("dashboard/", views.dashboard, name="dashboard"),
     path("get_wolfi_packages/", views.get_wolfi_packages, name="get_wolfi_packages"),
@@ -51,5 +56,4 @@ urlpatterns = [
     path("analyzed_samples/", views.analyzed_samples, name="analyzed_samples"),
 ]
 
-if settings.DEBUG:
-    urlpatterns += static(settings.MEDIA_URL, document_root=settings.MEDIA_ROOT)
+# Media files are served from main urls.py

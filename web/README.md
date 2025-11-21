@@ -147,3 +147,12 @@ export NODE_PATH=/usr/lib/node_modules
 ```bash
 docker run --rm --privileged -v "${PWD}:/work" cgr.dev/chainguard/malcontent:latest --min-risk=high analyze  /work/solana-web3.js-1.95.7-r0.apk
 ```
+
+# useful blogs: 
+https://www.digitalocean.com/community/tutorials/how-to-use-postgresql-with-your-django-application-on-ubuntu-22-04
+
+https://www.digitalocean.com/community/tutorials/how-to-install-nginx-on-ubuntu-22-04
+
+https://www.digitalocean.com/community/tutorials/understanding-nginx-server-and-location-block-selection-algorithms
+
+https://www.digitalocean.com/community/tutorials/how-to-add-swap-space-on-ubuntu-20-04
