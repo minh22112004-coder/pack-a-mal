@@ -135,6 +135,12 @@ GRANT ALL PRIVILEGES ON DATABASE $DB_NAME TO $DB_USER;
 -- Make user a superuser (for development - remove in production)
 ALTER USER $DB_USER CREATEDB;
 EOF
+
+    # Grant schema permissions on the specific database
+    print_info "Granting schema permissions..."
+    sudo -u postgres psql -d $DB_NAME <<EOF
+GRANT ALL ON SCHEMA public TO $DB_USER;
+EOF
     
     print_info "Database setup completed successfully"
 }
