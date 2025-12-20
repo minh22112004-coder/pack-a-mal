@@ -137,6 +137,7 @@ class AnalysisRunner:
         opts = [
             "run",
             "--cgroupns=host",
+            "--userns=host", # For full privileges
             "--privileged",
             "--rm",
             "--cpus=2.0",
