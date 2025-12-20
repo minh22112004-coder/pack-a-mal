@@ -205,7 +205,7 @@ See [SETUP.md](SETUP.md) for complete production setup with Gunicorn and Nginx.
 
 #### Homepage
 
-![Homepage](images/homepage.png)
+![Homepage](https://bit.ly/packguard-dev)
 
 The homepage provides an overview of available features:
 - Package analysis tools
