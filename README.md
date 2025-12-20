@@ -1,7 +1,7 @@
-# PackAMal: dynamic analysis opensource package
+# PackAMal: a dynamic malware analysis framwork for open-source packages
 
 
-## OverView
+## Overview
 This is comprehensive source code and deploy in production for project packamal. This project include 2 main components:
 
 ### 1. Dynamic Analysis Module
@@ -30,7 +30,7 @@ This is comprehensive source code and deploy in production for project packamal.
 - Scheduler: Kubernetes service that schedules analysis jobs from package feeds
 - Worker: Processes analysis jobs from the queue
 
-### 2. Web API
+### 2. Web APIs
 
 **Overview**: A Django-based web application that provides both a web interface and REST API for analyzing packages from multiple ecosystems. The platform performs dynamic and static analysis to detect security vulnerabilities, typosquatting attempts, and malicious behavior in software packages.
 
@@ -51,7 +51,7 @@ This is comprehensive source code and deploy in production for project packamal.
 3. **Typosquatting Detection**: Identifies packages with similar names to popular packages
 4. **Source Code Finder**: Locates source code repositories for packages (supports PyPI and npm ecosystems)
 
-**REST API**:
+**REST APIs**:
 - Full programmatic access to all analysis features
 - API key authentication with rate limiting
 - Queue management and task status tracking
