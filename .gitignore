@@ -20,3 +20,4 @@ web/package-analysis-web/package_analysis/management/__pycache__
 **/__pycache__/
 web/docs
 web/package-analysis-web/.env
+packamalenv/
