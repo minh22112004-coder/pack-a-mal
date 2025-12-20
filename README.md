@@ -1,4 +1,4 @@
-# PackAMal: a dynamic malware analysis framwork for open-source packages
+# Pack-A-Mal: a dynamic malware analysis framwork for open-source packages
 
 
 ## Overview
@@ -67,3 +67,6 @@ This is comprehensive source code and deploy in production for project packamal.
 **Supported Ecosystems**: PyPI, npm, Packagist, RubyGems, Maven, Rust, and Wolfi
 
 ## Contact: support@packguard.dev
+
+## Papaer
+- [Pack-A-Mal: A Malware Analysis Framework for Open-Source Packages](https://arxiv.org/pdf/2511.09957)
