@@ -215,7 +215,8 @@ The homepage provides an overview of available features:
 
 #### Dashboard
 
-![Dashboard](images/dashboard.png)
+
+[Dashboard](https://bit.ly/packguard-dev)
 
 The dashboard allows you to:
 
@@ -227,7 +228,7 @@ The dashboard allows you to:
 
 #### Reports
 
-![Report Detail](images/report.png)
+[Report Detail](https://bit.ly/packguard-dev)
 
 Analysis reports include:
 
@@ -378,11 +379,6 @@ cd web/packamal
 python manage.py test
 ```
 
-### Code Quality
-
-The project uses:
-- **Bandit**: Security linting
-- **pytest**: Testing framework
 
 ---
 
