@@ -16,6 +16,7 @@ yara-python
 django_distill
 bandit
 pytest
+dotenv
 
 # Celery and async task processing
 celery[redis]

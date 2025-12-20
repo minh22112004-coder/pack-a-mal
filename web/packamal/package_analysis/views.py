@@ -48,6 +48,21 @@ def save_professional_report(completed_task, request):
     else:
         # If it's already the report data
         report_json = report_data
+    
+    # Check if report is stored in Redis and retrieve it
+    if isinstance(report_json, dict) and report_json.get('_stored_in_redis'):
+        db_redis_key = report_json.get('redis_key')
+        if db_redis_key:
+            redis_client = get_redis_client()
+            redis_data = redis_client.get(db_redis_key)
+            if redis_data:
+                try:
+                    report_json = json.loads(redis_data)
+                    logger.info(f"Retrieved large report from Redis key: {db_redis_key}")
+                except (json.JSONDecodeError, TypeError) as e:
+                    logger.error(f"Failed to parse report data from Redis key {db_redis_key}: {e}")
+                    # Fall back to using the reference (will store summary only)
+                    pass
 
     ecosystem = completed_task.ecosystem.lower()
     package_name = _safe_package_name(completed_task.package_name)
@@ -146,17 +161,87 @@ def download_professional_report(request, ecosystem, package_name, package_versi
 
 
 def save_report(reports):
-
+    """
+    Save analysis report to database. For large reports (>200MB), store in Redis
+    and save a reference in the database to avoid exceeding PostgreSQL JSONB limit.
+    """
     package, created = Package.objects.get_or_create(
         package_name=reports['packages']['package_name'],
         package_version=reports['packages']['package_version'],
         ecosystem=reports['packages']['ecosystem']
     )
-    report = ReportDynamicAnalysis.objects.create(
-        package=package,
-        time=reports['time'],
-        report=reports
-    )
+    
+    # Calculate the size of the report JSON
+    report_json_str = json.dumps(reports, ensure_ascii=False)
+    report_size_bytes = len(report_json_str.encode('utf-8'))
+    
+    # PostgreSQL JSONB limit is 268435455 bytes (~256MB), use 200MB as safe threshold
+    MAX_DB_SIZE = 200 * 1024 * 1024  # 200MB in bytes
+    
+    if report_size_bytes > MAX_DB_SIZE:
+        # Store large report in Redis and save reference in database
+        logger.info(f"Report size ({report_size_bytes / (1024*1024):.2f}MB) exceeds threshold, storing in Redis")
+        
+        ecosystem = reports['packages']['ecosystem'].lower()
+        package_name = _safe_package_name(reports['packages']['package_name'])
+        version = reports['packages']['package_version']
+        
+        redis_client = get_redis_client()
+        redis_key = f"db_report:{ecosystem}:{package_name}:{version}"
+        
+        # Store full report in Redis with long TTL (7 days)
+        try:
+            redis_client.setex(redis_key, 7 * 24 * 60 * 60, report_json_str)
+            logger.info(f"Successfully stored large report in Redis with key: {redis_key}")
+        except Exception as redis_error:
+            logger.error(f"Failed to store report in Redis: {redis_error}")
+            # If Redis storage fails, we'll still try to save a reference, but log the error
+            # The reference will indicate it should be in Redis but retrieval might fail
+        
+        # Store reference in database instead of full report
+        report_reference = {
+            "_stored_in_redis": True,
+            "redis_key": redis_key,
+            "size_bytes": report_size_bytes,
+            "summary": {
+                "package_name": reports['packages']['package_name'],
+                "package_version": reports['packages']['package_version'],
+                "ecosystem": reports['packages']['ecosystem'],
+                "time": reports.get('time', 0.0),
+            }
+        }
+        
+        # Add summary statistics if available
+        if 'install' in reports:
+            install = reports.get('install', {})
+            report_reference['summary']['install'] = {
+                'num_files': install.get('num_files', 0),
+                'num_commands': install.get('num_commands', 0),
+                'num_network_connections': install.get('num_network_connections', 0),
+                'num_system_calls': install.get('num_system_calls', 0),
+            }
+        if 'execute' in reports:
+            execute = reports.get('execute', {})
+            report_reference['summary']['execute'] = {
+                'num_files': execute.get('num_files', 0),
+                'num_commands': execute.get('num_commands', 0),
+                'num_network_connections': execute.get('num_network_connections', 0),
+                'num_system_calls': execute.get('num_system_calls', 0),
+            }
+        
+        report = ReportDynamicAnalysis.objects.create(
+            package=package,
+            time=reports['time'],
+            report=report_reference
+        )
+    else:
+        # Store full report in database for smaller reports
+        report = ReportDynamicAnalysis.objects.create(
+            package=package,
+            time=reports['time'],
+            report=reports
+        )
+    
     report.save()
 
 
@@ -452,12 +537,31 @@ def get_all_report(request):
 
 def get_report(request, report_id):
     report = ReportDynamicAnalysis.objects.get(pk=report_id)
+    
+    # Check if report is stored in Redis
+    report_data = report.report
+    if isinstance(report_data, dict) and report_data.get('_stored_in_redis'):
+        # Retrieve full report from Redis
+        redis_client = get_redis_client()
+        redis_key = report_data.get('redis_key')
+        if redis_key:
+            redis_data = redis_client.get(redis_key)
+            if redis_data:
+                try:
+                    report_data = json.loads(redis_data)
+                except (json.JSONDecodeError, TypeError):
+                    logger.error(f"Failed to parse report data from Redis key: {redis_key}")
+                    report_data = report_data  # Fall back to reference
+            else:
+                logger.warning(f"Report data not found in Redis key: {redis_key}")
+                report_data = report_data  # Fall back to reference
+    
     results = {
         'package_name': report.package.package_name,
         'package_version': report.package.package_version,
         'ecosystem': report.package.ecosystem,
         'time': report.time,
-        'report_data': report.report,
+        'report_data': report_data,
     }
     return JsonResponse(results)
 

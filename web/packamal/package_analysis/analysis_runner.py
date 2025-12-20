@@ -27,7 +27,7 @@ class AnalysisRunner:
     CONTAINER_VOLUME = os.getenv('CONTAINER_VOLUME', 'analysis_container_data')
     
     # Default analysis image
-    DEFAULT_ANALYSIS_IMAGE = "docker.io/pakaremon/analysis"
+    DEFAULT_ANALYSIS_IMAGE = os.getenv('ANALYSIS_IMAGE', 'docker.io/pakaremon/analysis')
     
     def __init__(self, analysis_image: Optional[str] = None):
         """
