@@ -445,3 +445,35 @@
 [2026-01-24 19:03:07]   Unable to open report file '/var/log/inetsim/report/report.1.txt' for writing: No such file or directory
 [2026-01-24 19:03:07]  === INetSim main process stopped (PID 1) ===
 [2026-01-24 19:03:07]  .
+[2026-01-26 01:13:34]  Using log directory:      /var/log/inetsim/
+[2026-01-26 01:13:34]  Using data directory:     /var/lib/inetsim/
+[2026-01-26 01:13:34]  Using report directory:   /var/log/inetsim/report/
+[2026-01-26 01:13:34]  Using configuration file: /etc/inetsim/inetsim.conf
+[2026-01-26 01:13:34]  Parsing configuration file.
+[2026-01-26 01:13:34]  Configuration file parsed successfully.
+[2026-01-26 01:13:34]  === INetSim main process started (PID 1) ===
+[2026-01-26 01:13:34]  Session ID:     1
+[2026-01-26 01:13:34]  Listening on:   0.0.0.0
+[2026-01-26 01:13:34]  Real Date/Time: 2026-01-26 01:13:34
+[2026-01-26 01:13:34]  Fake Date/Time: 2026-01-26 01:13:34 (Delta: 0 seconds)
+[2026-01-26 01:13:34]   Forking services...
+[2026-01-26 01:13:34]    * dns_53_tcp_udp started (PID 15)
+[2026-01-26 01:13:34]    * http_80_tcp started (PID 14)
+[2026-01-26 01:13:37]   done.
+[2026-01-26 01:13:37]  Simulation running.
+[2026-01-28 07:27:18]  Using log directory:      /var/log/inetsim/
+[2026-01-28 07:27:18]  Using data directory:     /var/lib/inetsim/
+[2026-01-28 07:27:18]  Using report directory:   /var/log/inetsim/report/
+[2026-01-28 07:27:18]  Using configuration file: /etc/inetsim/inetsim.conf
+[2026-01-28 07:27:18]  Parsing configuration file.
+[2026-01-28 07:27:18]  Configuration file parsed successfully.
+[2026-01-28 07:27:18]  === INetSim main process started (PID 1) ===
+[2026-01-28 07:27:18]  Session ID:     1
+[2026-01-28 07:27:18]  Listening on:   0.0.0.0
+[2026-01-28 07:27:18]  Real Date/Time: 2026-01-28 07:27:18
+[2026-01-28 07:27:18]  Fake Date/Time: 2026-01-28 07:27:18 (Delta: 0 seconds)
+[2026-01-28 07:27:18]   Forking services...
+[2026-01-28 07:27:18]    * dns_53_tcp_udp started (PID 15)
+[2026-01-28 07:27:18]    * http_80_tcp started (PID 14)
+[2026-01-28 07:27:21]   done.
+[2026-01-28 07:27:21]  Simulation running.
