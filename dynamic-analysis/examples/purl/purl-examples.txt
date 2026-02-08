@@ -1,0 +1,40 @@
+# Example pURLs for Testing
+
+# Python packages (PyPI)
+pkg:pypi/requests@2.31.0
+pkg:pypi/django@4.2.0
+pkg:pypi/flask@2.3.0
+pkg:pypi/numpy@1.24.0
+pkg:pypi/pandas@2.0.0
+
+# Node.js packages (npm)
+pkg:npm/express@4.18.2
+pkg:npm/lodash@4.17.21
+pkg:npm/react@18.2.0
+pkg:npm/@babel/core@7.22.0
+pkg:npm/@angular/core@15.0.0
+
+# Ruby packages (RubyGems)
+pkg:gem/rails@7.0.4
+pkg:gem/devise@4.9.0
+pkg:gem/nokogiri@1.15.0
+
+# Java packages (Maven)
+pkg:maven/org.springframework/spring-core@5.3.27
+pkg:maven/com.google.guava/guava@31.1-jre
+pkg:maven/org.apache.commons/commons-lang3@3.12.0
+
+# PHP packages (Packagist)
+pkg:packagist/symfony/symfony@5.4.0
+pkg:packagist/laravel/framework@10.0.0
+pkg:packagist/monolog/monolog@3.3.0
+
+# Rust packages (Crates)
+pkg:cargo/serde@1.0.163
+pkg:cargo/tokio@1.28.0
+pkg:cargo/clap@4.3.0
+
+# Latest versions (no version specified)
+pkg:pypi/requests
+pkg:npm/express
+pkg:gem/rails

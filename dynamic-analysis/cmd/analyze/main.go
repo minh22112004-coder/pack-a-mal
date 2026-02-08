@@ -10,6 +10,7 @@ import (
 	"os"
 	"strings"
 
+	"github.com/package-url/packageurl-go"
 	"golang.org/x/exp/maps"
 	"golang.org/x/exp/slices"
 
@@ -29,6 +30,7 @@ import (
 var (
 	pkgName            = flag.String("package", "", "package name")
 	localPkg           = flag.String("local", "", "local package path")
+	purl               = flag.String("purl", "", "package URL (purl) - alternative to -package/-ecosystem/-version")
 	ecosystem          pkgecosystem.Ecosystem
 	version            = flag.String("version", "", "version")
 	noPull             = flag.Bool("nopull", false, "disables pulling down sandbox images")
@@ -209,21 +211,78 @@ func run() error {
 		return nil
 	}
 
-	if ecosystem == pkgecosystem.None {
-		flag.Usage()
-		return usagef("missing ecosystem")
+	// Determine package resolution method: purl or traditional (ecosystem + name)
+	var pkg *pkgmanager.Pkg
+	var err error
+	var ctx context.Context
+
+	if *purl != "" {
+		// Parse and resolve package from pURL
+		purlObj, parseErr := packageurl.FromString(*purl)
+		if parseErr != nil {
+			return usagef("invalid purl format: %w", parseErr)
+		}
+
+		ctx = log.ContextWithAttrs(context.Background(),
+			slog.String("purl", *purl),
+		)
+
+		slog.InfoContext(ctx, "Got pURL request",
+			slog.String("purl", *purl),
+		)
+
+		pkg, err = worker.ResolvePurl(purlObj)
+		if err != nil {
+			slog.ErrorContext(ctx, "Error resolving purl", "error", err)
+			return err
+		}
+
+		// Update context with resolved package info
+		ctx = log.ContextWithAttrs(ctx,
+			slog.Any("ecosystem", pkg.EcosystemName()),
+			slog.String("name", pkg.Name()),
+			slog.String("version", pkg.Version()),
+		)
+	} else {
+		// Traditional package resolution
+		if ecosystem == pkgecosystem.None {
+			flag.Usage()
+			return usagef("missing ecosystem (or use -purl instead)")
+		}
+
+		manager := pkgmanager.Manager(ecosystem)
+		if manager == nil {
+			return usagef("unsupported package ecosystem %q", ecosystem)
+		}
+
+		if *pkgName == "" {
+			flag.Usage()
+			return usagef("missing package name (or use -purl instead)")
+		}
+
+		ctx = log.ContextWithAttrs(context.Background(),
+			slog.Any("ecosystem", ecosystem),
+		)
+
+		slog.InfoContext(ctx, "Got request",
+			slog.String("requested_name", *pkgName),
+			slog.String("requested_version", *version),
+		)
+
+		pkg, err = worker.ResolvePkg(manager, *pkgName, *version, *localPkg)
+		if err != nil {
+			slog.ErrorContext(ctx, "Error resolving package", "error", err)
+			return err
+		}
+
+		// Update context with resolved package info
+		ctx = log.ContextWithAttrs(ctx,
+			slog.String("name", pkg.Name()),
+			slog.String("version", pkg.Version()),
+		)
 	}
 
-	manager := pkgmanager.Manager(ecosystem)
-	if manager == nil {
-		return usagef("unsupported package ecosystem %q", ecosystem)
-	}
-
-	if *pkgName == "" {
-		flag.Usage()
-		return usagef("missing package name")
-	}
-
+	// Parse analysis modes
 	runMode := make(map[analysis.Mode]bool)
 	for _, analysisName := range analysisMode.Values {
 		mode, ok := analysis.ModeFromString(strings.ToLower(analysisName))
@@ -233,26 +292,6 @@ func run() error {
 		}
 		runMode[mode] = true
 	}
-
-	ctx := log.ContextWithAttrs(context.Background(),
-		slog.Any("ecosystem", ecosystem),
-	)
-
-	slog.InfoContext(ctx, "Got request",
-		slog.String("requested_name", *pkgName),
-		slog.String("requested_version", *version),
-	)
-
-	pkg, err := worker.ResolvePkg(manager, *pkgName, *version, *localPkg)
-	if err != nil {
-		slog.ErrorContext(ctx, "Error resolving package", "error", err)
-		return err
-	}
-
-	ctx = log.ContextWithAttrs(ctx,
-		slog.String("name", pkg.Name()),
-		slog.String("version", pkg.Version()),
-	)
 
 	slog.InfoContext(ctx, "Processing resolved package", "package_path", *localPkg)
 	resultStores := makeResultStores()

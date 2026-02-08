@@ -300,6 +300,12 @@ func (s *podmanSandbox) pullImage(ctx context.Context) error {
 
 func (s *podmanSandbox) createContainer(ctx context.Context) (string, error) {
 	args := []string{
+		"create",
+		"--security-opt=label=disable",
+		"--runtime=" + runtimeBin,
+		"--attach=false",
+	}
+
 	// Configure DNS servers - use custom if provided, otherwise default
 	dnsServers := s.dnsServers
 	if len(dnsServers) == 0 {
@@ -311,14 +317,9 @@ func (s *podmanSandbox) createContainer(ctx context.Context) (string, error) {
 		networkArgs = append(networkArgs, "--dns="+dns)
 	}
 	networkArgs = append(networkArgs,
-		"--dns-search=.", // network traffic to private IP address ranges.
+		"--dns-search=.", // allow for tighter firewall rules that block network traffic to private IP address ranges.
 		"--network="+networkName,
-	)etworkArgs := []string{
-		"--dns=8.8.8.8",  // Manually specify DNS to bypass kube-dns and
-		"--dns=8.8.4.4",  // allow for tighter firewall rules that block
-		"--dns-search=.", // network traffic to private IP address ranges.
-		"--network=" + networkName,
-	}
+	)
 
 	if s.offline {
 		args = append(args, "--network=none")
