@@ -2,13 +2,27 @@
 
 Dự án mô phỏng các Internet services (HTTP, DNS) sử dụng INetSim và Flask API để giám sát và thu thập logs.
 
+## 🆕 Tính Năng Mở Rộng (Version 2.0)
+
+**Hệ thống giả lập HTTP thông minh** với khả năng:
+- ✅ **Phân tích yêu cầu HTTP đến** - Trích xuất và phân tích chi tiết request
+- ✅ **Nhận diện mục đích truy cập** - Phân loại tự động 9 loại request khác nhau
+- ✅ **Trả về phản hồi phù hợp** - Response động dựa trên loại và risk level
+- ✅ **Xử lý an toàn file thực thi** - Sandbox, honeypot, và blocking cho executables
+- ✅ **Phát hiện tấn công** - Nhận diện XSS, SQL injection, path traversal, command injection
+- ✅ **Logging chi tiết** - Track tất cả executable requests với metadata
+
+📖 **[Xem Hướng Dẫn Chi Tiết](HTTP_SIMULATION_GUIDE.md)**
+
 ## 📋 Mục lục
+- [Tính Năng Mở Rộng](#-tính-năng-mở-rộng-version-20)
 - [Giới thiệu](#giới-thiệu)
 - [Cấu trúc dự án](#cấu-trúc-dự-án)
 - [Yêu cầu hệ thống](#yêu-cầu-hệ-thống)
 - [Cài đặt và chạy](#cài-đặt-và-chạy)
 - [Kiểm tra hoạt động](#kiểm-tra-hoạt-động)
 - [API Endpoints](#api-endpoints)
+- [Demo & Testing](#-demo--testing)
 - [Cấu hình](#cấu-hình)
 - [Troubleshooting](#troubleshooting)
 
@@ -16,7 +30,7 @@ Dự án mô phỏng các Internet services (HTTP, DNS) sử dụng INetSim và 
 
 Project bao gồm 2 services chính:
 1. **INetSim**: Mô phỏng các internet services (HTTP, DNS)
-2. **Service-Simulation**: Flask API để quản lý và giám sát INetSim
+2. **Service-Simulation**: Flask API thông minh với khả năng phân tích và phản hồi HTTP
 
 ## 📁 Cấu trúc dự án
 
@@ -30,17 +44,30 @@ service-simulation-module/
 │   ├── Dockerfile             # Build image Python + Flask
 │   └── app/
 │       ├── main.py            # Entry point - khởi động Flask
+│       ├── analyzer/          # 🆕 HTTP Analysis Module
+│       │   ├── http_analyzer.py      # Phân tích HTTP requests
+│       │   └── request_classifier.py # Phân loại requests
+│       ├── handler/           # 🆕 Response Handling Module
+│       │   ├── response_handler.py        # Tạo responses
+│       │   └── safe_executable_handler.py # Xử lý executables an toàn
 │       ├── api/
-│       │   └── server.py      # Flask API endpoints
+│       │   └── server.py      # Flask API endpoints (expanded)
 │       ├── collector/
 │       │   └── logs.py        # Log collector
 │       └── config/
 │           └── inetsim.py     # Generator config INetSim
-└── shared/                    # Data được share giữa containers
-    ├── config/
-    │   └── etc/inetsim/
-    │       └── inetsim.conf   # Config file của INetSim
-    └── logs/                  # Log files từ cả 2 services
+├── shared/                    # Data được share giữa containers
+│   ├── config/
+│   │   └── etc/inetsim/
+│   │       └── inetsim.conf   # Config file của INetSim
+│   └── logs/                  # Log files từ cả 2 services
+│       └── executables/       # 🆕 Sandboxed executable files
+│           ├── *.exe          # Fake/honeypot executables
+│           ├── *.metadata.json  # Request metadata
+│           └── executable_requests.log  # Execution logs
+├── HTTP_SIMULATION_GUIDE.md   # 🆕 Comprehensive guide
+├── demo_http_simulation.py    # 🆕 Demo script
+└── test_http_simulation.py    # 🆕 Test suite
 ```
 
 ## 💻 Yêu cầu hệ thống
@@ -124,9 +151,123 @@ GET http://localhost:5000/status
 **Response:**
 ```json
 {
-  "service": "simulation",
-  "status": "running"
+  "service": "http-simulation",
+  "status": "running",
+  "version": "2.0",
+  "features": [
+    "http_analysis",
+    "request_classification",
+    "safe_executable_handling",
+    "adaptive_response"
+  ]
 }
+```
+
+### Analyze Request
+```
+POST http://localhost:5000/analyze
+```
+Phân tích một HTTP request và trả về thông tin chi tiết về category, intent, risk level.
+
+### Simulate Request
+```
+POST http://localhost:5000/simulate
+```
+Simulate một HTTP request và trả về response thực tế.
+
+### View Executable Logs
+```
+GET http://localhost:5000/logs/executables
+```
+Xem danh sách tất cả executable download requests đã được log.
+
+### Catch-All Route
+```
+ANY /*
+```
+Mọi request khác sẽ được phân tích tự động và trả về response phù hợp.
+
+📖 **[Xem API Documentation Chi Tiết](HTTP_SIMULATION_GUIDE.md#-api-endpoints)**
+
+## 🧪 Demo & Testing
+
+### Quick Demo
+Chạy script demo để xem các tính năng chính:
+
+```bash
+# Đảm bảo service đang chạy
+docker-compose up -d
+
+# Cài dependencies (nếu chưa có)
+pip install requests
+
+# Chạy demo
+python demo_http_simulation.py
+```
+
+Demo sẽ showcase:
+- ✅ Service status check
+- ✅ Executable download analysis
+- ✅ Safe executable handling (sandbox)
+- ✅ Honeypot executable for suspicious requests
+- ✅ Malicious request detection (XSS, path traversal)
+- ✅ API simulation
+- ✅ Authentication simulation
+- ✅ Static content serving
+- ✅ Logging and tracking
+
+### Full Test Suite
+Chạy comprehensive test suite:
+
+```bash
+# Chạy tất cả tests
+python test_http_simulation.py
+
+# Output:
+# ============================================================
+# HTTP SIMULATION SYSTEM - TEST SUITE
+# ============================================================
+# TEST: Status Check
+# ✓ PASSED
+# TEST: Static Content - CSS
+# ✓ PASSED
+# ...
+# TEST SUMMARY
+# Total Tests: 12
+# Passed: 12 ✓
+# Success Rate: 100.0%
+```
+
+### Manual Testing Examples
+
+#### Test 1: Download Safe Executable
+```bash
+curl http://localhost:5000/tools/installer.exe -o installer.exe
+# Headers sẽ chứa: X-Sandboxed: true
+```
+
+#### Test 2: Trigger Honeypot
+```bash
+curl http://localhost:5000/malware.exe -H "User-Agent: Suspicious" -o malware.exe
+# Headers sẽ chứa: X-Honeypot: true
+```
+
+#### Test 3: Malicious Request
+```bash
+curl "http://localhost:5000/api?id=1' OR '1'='1"
+# Risk level: high, có thể bị block
+```
+
+#### Test 4: Analyze Request
+```bash
+curl -X POST http://localhost:5000/analyze \
+  -H "Content-Type: application/json" \
+  -d '{
+    "method": "GET",
+    "url": "/download/suspicious.exe",
+    "headers": {"User-Agent": "Bot"},
+    "client_ip": "192.168.1.1"
+  }'
 ```
 
 ## ⚙️ Cấu hình

@@ -1,0 +1,35 @@
+{
+  "request_id": "ae50d3db886fecb7",
+  "timestamp": "2026-02-08T06:37:37.242032",
+  "filename": "installer.exe",
+  "extension": ".exe",
+  "full_path": "/tools/installer.exe",
+  "client_ip": "172.20.0.1",
+  "user_agent": "python-requests/2.31.0",
+  "method": "GET",
+  "headers": {
+    "Host": "localhost:5000",
+    "User-Agent": "python-requests/2.31.0",
+    "Accept-Encoding": "gzip, deflate",
+    "Accept": "*/*",
+    "Connection": "keep-alive"
+  },
+  "query_params": {},
+  "category": "executable_download",
+  "intent": "download_executable",
+  "risk_assessment": {
+    "level": "low",
+    "flags": {
+      "suspicious_patterns_found": [],
+      "risk_level": "low",
+      "has_path_traversal": false,
+      "has_xss_attempt": false,
+      "has_sql_injection": false,
+      "has_command_injection": false,
+      "unusual_headers": []
+    },
+    "is_suspicious": false
+  },
+  "platform": "windows",
+  "handling_strategy": "sandbox_fake"
+}
